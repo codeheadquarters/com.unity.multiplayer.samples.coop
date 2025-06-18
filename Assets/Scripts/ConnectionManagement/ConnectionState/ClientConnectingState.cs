@@ -25,10 +25,18 @@ namespace Unity.BossRoom.ConnectionManagement
 #pragma warning restore 4014
         }
 
-        public override void Exit() { }
+        public override void Exit() 
+        { 
+            // Dispose of connection method when exiting to ensure proper cleanup
+            if (m_ConnectionMethod is IDisposable disposableConnectionMethod)
+            {
+                disposableConnectionMethod.Dispose();
+            }
+        }
 
-        public override void OnClientConnected(ulong _)
+        public override void OnClientConnected(ulong clientId)
         {
+            Debug.Log($"[ClientConnectingState] OnClientConnected called with clientId: {clientId}");
             m_ConnectStatusPublisher.Publish(ConnectStatus.Success);
             m_ConnectionManager.ChangeState(m_ConnectionManager.m_ClientConnected);
         }
@@ -60,13 +68,21 @@ namespace Unity.BossRoom.ConnectionManagement
             try
             {
                 // Setup NGO with current connection method
+                Debug.Log("[ClientConnectingState] Starting SetupClientConnectionAsync...");
                 await m_ConnectionMethod.SetupClientConnectionAsync();
+                Debug.Log("[ClientConnectingState] SetupClientConnectionAsync completed successfully");
 
                 // NGO's StartClient launches everything
-                if (!m_ConnectionManager.NetworkManager.StartClient())
+                Debug.Log("[ClientConnectingState] About to call NetworkManager.StartClient()...");
+                var startClientResult = m_ConnectionManager.NetworkManager.StartClient();
+                Debug.Log($"[ClientConnectingState] NetworkManager.StartClient() returned: {startClientResult}");
+                
+                if (!startClientResult)
                 {
                     throw new Exception("NetworkManager StartClient failed");
                 }
+                
+                Debug.Log("[ClientConnectingState] StartClient succeeded, waiting for OnClientConnected callback...");
             }
             catch (Exception e)
             {

@@ -11,12 +11,16 @@
         "Unity.BossRoom.Utils",
         "Unity.Services.Lobbies",
         "Unity.Networking.Transport",
+        "Unity.Collections",
+        "Unity.Jobs",
+        "Unity.Burst",
         "VContainer",
-        "Unity.Services.Relay"
+        "Unity.Services.Relay",
+        "Unity.Netcode.Transports.Viverse"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
-    "allowUnsafeCode": false,
+    "allowUnsafeCode": true,
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,

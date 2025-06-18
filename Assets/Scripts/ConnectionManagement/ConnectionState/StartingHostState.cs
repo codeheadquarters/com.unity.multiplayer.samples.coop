@@ -31,7 +31,24 @@ namespace Unity.BossRoom.ConnectionManagement
             StartHost();
         }
 
-        public override void Exit() { }
+        public override void Exit() 
+        { 
+            // For Viverse connection methods, don't dispose here - pass to HostingState instead
+            if (m_ConnectionMethod is ConnectionMethodViverse viverseConnectionMethod)
+            {
+                Debug.Log("[StartingHostState] Passing Viverse connection method to HostingState for proper cleanup");
+                // The HostingState will take ownership and clean up when appropriate
+                m_ConnectionManager.m_Hosting.SetViverseConnectionMethod(viverseConnectionMethod);
+            }
+            else
+            {
+                // Dispose of non-VP1-Play connection methods when exiting to ensure proper cleanup
+                if (m_ConnectionMethod is IDisposable disposableConnectionMethod)
+                {
+                    disposableConnectionMethod.Dispose();
+                }
+            }
+        }
 
         public override void OnServerStarted()
         {

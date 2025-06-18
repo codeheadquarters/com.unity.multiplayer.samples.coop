@@ -88,8 +88,23 @@ namespace Unity.BossRoom.Gameplay.UI
 
         void PeriodicRefresh(float _)
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // For VP1-Play, only skip periodic refresh if we're in an active multiplayer session
+            // Check if NetworkManager exists and is connected to avoid interfering with active games
+            if (Unity.Netcode.NetworkManager.Singleton != null && 
+                (Unity.Netcode.NetworkManager.Singleton.IsHost || Unity.Netcode.NetworkManager.Singleton.IsClient))
+            {
+                Debug.Log("[LobbyJoiningUI] Skipping periodic refresh - VP1-Play multiplayer session active");
+                return;
+            }
+            
+            // Otherwise, allow periodic refresh for VP1-Play room discovery
+            Debug.Log("[LobbyJoiningUI] Performing VP1-Play periodic room discovery");
+            m_LobbyUIMediator.QueryLobbiesRequest(false);
+#else
             //this is a soft refresh without needing to lock the UI and such
             m_LobbyUIMediator.QueryLobbiesRequest(false);
+#endif
         }
 
         public void OnRefresh()
@@ -154,6 +169,13 @@ namespace Unity.BossRoom.Gameplay.UI
             m_CanvasGroup.blocksRaycasts = true;
             m_JoinCodeField.text = "";
             m_UpdateRunner.Subscribe(PeriodicRefresh, 10f);
+            
+            // For VP1-Play on WebGL, do an initial query when the UI is shown
+            // This ensures the lobby list is populated on first load
+#if UNITY_WEBGL && !UNITY_EDITOR
+            Debug.Log("[LobbyJoiningUI] Triggering initial VP1-Play room discovery on Show()");
+            m_LobbyUIMediator.QueryLobbiesRequest(false);
+#endif
         }
 
         public void Hide()

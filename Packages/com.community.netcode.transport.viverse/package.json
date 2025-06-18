@@ -1,0 +1,29 @@
+{
+  "name": "com.community.netcode.transport.viverse",
+  "displayName": "Viverse Transport",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "A Unity Netcode transport implementation for Viverse WebRTC P2P networking.",
+  "keywords": [
+    "netcode",
+    "transport",
+    "viverse",
+    "webrtc",
+    "p2p",
+    "multiplayer"
+  ],
+  "author": {
+    "name": "Community",
+    "email": "community@unity.com"
+  },
+  "dependencies": {
+    "com.unity.netcode.gameobjects": "1.0.0",
+    "com.unity.transport": "2.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Unity-Technologies/multiplayer-community-contributions.git",
+    "directory": "Transports/com.community.netcode.transport.viverse"
+  },
+  "license": "MIT"
+}

@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 using Unity.BossRoom.Gameplay.Configuration;
 using Unity.BossRoom.Gameplay.UI;
 using Unity.BossRoom.UnityServices.Auth;
@@ -48,6 +49,21 @@ namespace Unity.BossRoom.Gameplay.GameState
         [Inject]
         ProfileManager m_ProfileManager;
 
+        // VP1-Play configuration
+        [SerializeField] private string m_VP1AppId = "example_game_boss";
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        // DllImport declarations for VP1-Play functions
+        [DllImport("__Internal")]
+        private static extern void initViverseClient();
+        
+        [DllImport("__Internal")]
+        private static extern void initViverseMatchmaking(string appId, int debug);
+        
+        //[DllImport("__Internal")]
+       // private static extern void setupMatchmakingEvents();
+#endif
+
         protected override void Awake()
         {
             base.Awake();
@@ -55,6 +71,11 @@ namespace Unity.BossRoom.Gameplay.GameState
             m_LobbyButton.interactable = false;
             m_LobbyUIMediator.Hide();
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // For WebGL builds, use VP1-Play instead of Unity Authentication
+            SetupVP1Play();
+#else
+            // For other platforms, use Unity Authentication
             if (string.IsNullOrEmpty(Application.cloudProjectId))
             {
                 OnSignInFailed();
@@ -62,6 +83,7 @@ namespace Unity.BossRoom.Gameplay.GameState
             }
 
             TrySignIn();
+#endif
         }
 
         protected override void Configure(IContainerBuilder builder)
@@ -71,6 +93,47 @@ namespace Unity.BossRoom.Gameplay.GameState
             builder.RegisterComponent(m_LobbyUIMediator);
             builder.RegisterComponent(m_IPUIMediator);
         }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private void SetupVP1Play()
+        {
+            Debug.Log("[ClientMainMenuState] Setting up VP1-Play for WebGL");
+            
+            try
+            {
+                // Initialize VP1-Play client components using DllImport functions
+                initViverseClient();
+                initViverseMatchmaking(m_VP1AppId, 0);
+                //setupMatchmakingEvents();
+                
+                // Enable lobby functionality immediately for VP1-Play
+                OnVP1PlayReady();
+                
+                Debug.Log("[ClientMainMenuState] VP1-Play setup complete");
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[ClientMainMenuState] VP1-Play setup failed: {e.Message}");
+                OnSignInFailed();
+            }
+        }
+
+        private void OnVP1PlayReady()
+        {
+            m_LobbyButton.interactable = true;
+            m_UGSSetupTooltipDetector.enabled = false;
+            m_SignInSpinner.SetActive(false);
+
+            Debug.Log("[ClientMainMenuState] VP1-Play ready - Lobby functionality enabled");
+
+            // Generate a VP1-Play compatible player ID
+            string vp1PlayerId = $"vp1_player_{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+            m_LocalUser.ID = vp1PlayerId;
+
+            // The local LobbyUser object will be hooked into UI before the LocalLobby is populated during lobby join
+            m_LocalLobby.AddUser(m_LocalUser);
+        }
+#endif
 
         private async void TrySignIn()
         {
@@ -119,12 +182,18 @@ namespace Unity.BossRoom.Gameplay.GameState
 
         protected override void OnDestroy()
         {
+#if !UNITY_WEBGL || UNITY_EDITOR
             m_ProfileManager.onProfileChanged -= OnProfileChanged;
+#endif
             base.OnDestroy();
         }
 
         async void OnProfileChanged()
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // VP1-Play doesn't use Unity profiles, so skip profile changes
+            return;
+#else
             m_LobbyButton.interactable = false;
             m_SignInSpinner.SetActive(true);
             await m_AuthServiceFacade.SwitchProfileAndReSignInAsync(m_ProfileManager.Profile);
@@ -138,6 +207,7 @@ namespace Unity.BossRoom.Gameplay.GameState
             m_LocalLobby.RemoveUser(m_LocalUser);
             m_LocalUser.ID = AuthenticationService.Instance.PlayerId;
             m_LocalLobby.AddUser(m_LocalUser);
+#endif
         }
 
         public void OnStartClicked()
@@ -154,7 +224,13 @@ namespace Unity.BossRoom.Gameplay.GameState
 
         public void OnChangeProfileClicked()
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // VP1-Play doesn't use Unity profiles, so disable profile changes
+            Debug.Log("[ClientMainMenuState] Profile changes not supported with VP1-Play");
+            return;
+#else
             m_UIProfileSelector.Show();
+#endif
         }
     }
 }

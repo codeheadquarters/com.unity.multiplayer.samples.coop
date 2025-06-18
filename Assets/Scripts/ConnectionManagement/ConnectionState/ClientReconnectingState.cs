@@ -38,6 +38,12 @@ namespace Unity.BossRoom.ConnectionManagement
                 m_ReconnectCoroutine = null;
             }
             m_ReconnectMessagePublisher.Publish(new ReconnectMessage(m_ConnectionManager.NbReconnectAttempts, m_ConnectionManager.NbReconnectAttempts));
+            
+            // Dispose of connection method when exiting to ensure proper cleanup
+            if (m_ConnectionMethod is IDisposable disposableConnectionMethod)
+            {
+                disposableConnectionMethod.Dispose();
+            }
         }
 
         public override void OnClientConnected(ulong _)

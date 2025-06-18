@@ -8,6 +8,7 @@ using Unity.BossRoom.UnityServices.Lobbies;
 using Unity.Services.Core;
 using UnityEngine;
 using VContainer;
+using System.Collections.Generic;
 
 namespace Unity.BossRoom.Gameplay.UI
 {
@@ -30,6 +31,7 @@ namespace Unity.BossRoom.Gameplay.UI
         NameGenerationData m_NameGenerationData;
         ConnectionManager m_ConnectionManager;
         ISubscriber<ConnectStatus> m_ConnectStatusSubscriber;
+        IPublisher<LobbyListFetchedMessage> m_LobbyListFetchedPub;
 
         const string k_DefaultLobbyName = "no-name";
 
@@ -41,7 +43,8 @@ namespace Unity.BossRoom.Gameplay.UI
             LocalLobby localLobby,
             NameGenerationData nameGenerationData,
             ISubscriber<ConnectStatus> connectStatusSub,
-            ConnectionManager connectionManager
+            ConnectionManager connectionManager,
+            IPublisher<LobbyListFetchedMessage> lobbyListFetchedPub
         )
         {
             m_AuthenticationServiceFacade = authenticationServiceFacade;
@@ -51,6 +54,7 @@ namespace Unity.BossRoom.Gameplay.UI
             m_LocalLobby = localLobby;
             m_ConnectionManager = connectionManager;
             m_ConnectStatusSubscriber = connectStatusSub;
+            m_LobbyListFetchedPub = lobbyListFetchedPub;
             RegenerateName();
 
             m_ConnectStatusSubscriber.Subscribe(OnConnectStatus);
@@ -84,6 +88,17 @@ namespace Unity.BossRoom.Gameplay.UI
 
             BlockUIWhileLoadingIsInProgress();
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // For WebGL builds, use VP1-Play directly instead of Unity Services
+            Debug.Log($"[LobbyUIMediator] Creating VP1-Play room: {lobbyName}");
+            
+            // Set up local user as host for VP1-Play
+            m_LocalUser.IsHost = true;
+            
+            // Use VP1-Play connection method directly
+            m_ConnectionManager.StartHostLobby(m_LocalUser.DisplayName);
+#else
+            // For other platforms, use Unity Authentication and Lobby services
             bool playerIsAuthorized = await m_AuthenticationServiceFacade.EnsurePlayerIsAuthorized();
 
             if (!playerIsAuthorized)
@@ -106,10 +121,52 @@ namespace Unity.BossRoom.Gameplay.UI
             {
                 UnblockUIAfterLoadingIsComplete();
             }
+#endif
         }
 
         public async void QueryLobbiesRequest(bool blockUI)
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // For WebGL builds, use VP1-Play room discovery
+            Debug.Log("[LobbyUIMediator] Starting VP1-Play room discovery...");
+            
+            if (blockUI)
+            {
+                BlockUIWhileLoadingIsInProgress();
+            }
+
+            try
+            {
+                // Use VP1-Play room discovery service
+                var roomDiscovery = new Unity.BossRoom.ConnectionManagement.VP1PlayRoomDiscovery();
+                var vp1Rooms = await roomDiscovery.GetAvailableRoomsAsync();
+                
+                // Convert VP1-Play rooms to Unity LocalLobby format
+                var localLobbies = roomDiscovery.ConvertToLocalLobbies(vp1Rooms);
+                
+                // Publish the lobby list using the same system as Unity Lobby service
+                m_LobbyListFetchedPub.Publish(new LobbyListFetchedMessage(localLobbies));
+                
+                Debug.Log($"[LobbyUIMediator] VP1-Play room discovery complete - found {localLobbies.Count} rooms");
+                
+                // Cleanup
+                roomDiscovery.Dispose();
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[LobbyUIMediator] VP1-Play room discovery failed: {e.Message}");
+                // Publish empty list on error
+                m_LobbyListFetchedPub.Publish(new LobbyListFetchedMessage(new List<LocalLobby>()));
+            }
+            finally
+            {
+                if (blockUI)
+                {
+                    UnblockUIAfterLoadingIsComplete();
+                }
+            }
+#else
+            // For other platforms, use Unity Lobby services
             if (Unity.Services.Core.UnityServices.State != ServicesInitializationState.Initialized)
             {
                 return;
@@ -134,12 +191,29 @@ namespace Unity.BossRoom.Gameplay.UI
             {
                 UnblockUIAfterLoadingIsComplete();
             }
+#endif
         }
 
         public async void JoinLobbyWithCodeRequest(string lobbyCode)
         {
             BlockUIWhileLoadingIsInProgress();
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // For WebGL builds, use VP1-Play to join room by code
+            Debug.Log($"[LobbyUIMediator] Joining VP1-Play room with code: {lobbyCode}");
+            
+            // Set up local user as client
+            m_LocalUser.IsHost = false;
+            
+            // For VP1-Play, treat the lobby code as the room ID
+            m_LocalLobby.RelayJoinCode = lobbyCode; // VP1-Play room ID
+            m_LocalLobby.LobbyID = lobbyCode;
+            m_LocalLobby.LobbyCode = lobbyCode;
+            
+            // Use VP1-Play connection method directly
+            m_ConnectionManager.StartClientLobby(m_LocalUser.DisplayName);
+#else
+            // For other platforms, use Unity Authentication and Lobby services
             bool playerIsAuthorized = await m_AuthenticationServiceFacade.EnsurePlayerIsAuthorized();
 
             if (!playerIsAuthorized)
@@ -158,12 +232,29 @@ namespace Unity.BossRoom.Gameplay.UI
             {
                 UnblockUIAfterLoadingIsComplete();
             }
+#endif
         }
 
         public async void JoinLobbyRequest(LocalLobby lobby)
         {
             BlockUIWhileLoadingIsInProgress();
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // For WebGL builds, use VP1-Play to join room
+            Debug.Log($"[LobbyUIMediator] Joining VP1-Play room: {lobby.LobbyName} (ID: {lobby.LobbyID})");
+            
+            // Set up local user as client
+            m_LocalUser.IsHost = false;
+            
+            // For VP1-Play, set the room ID as the RelayJoinCode so OfflineState can use it
+            m_LocalLobby.RelayJoinCode = lobby.LobbyID; // VP1-Play room ID
+            m_LocalLobby.LobbyID = lobby.LobbyID;
+            m_LocalLobby.LobbyName = lobby.LobbyName;
+            
+            // Use VP1-Play connection method directly
+            m_ConnectionManager.StartClientLobby(m_LocalUser.DisplayName);
+#else
+            // For other platforms, use Unity Authentication and Lobby services
             bool playerIsAuthorized = await m_AuthenticationServiceFacade.EnsurePlayerIsAuthorized();
 
             if (!playerIsAuthorized)
@@ -182,12 +273,19 @@ namespace Unity.BossRoom.Gameplay.UI
             {
                 UnblockUIAfterLoadingIsComplete();
             }
+#endif
         }
 
         public async void QuickJoinRequest()
         {
             BlockUIWhileLoadingIsInProgress();
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // For WebGL builds, use VP1-Play quick join
+            Debug.Log("[LobbyUIMediator] VP1-Play quick join not implemented yet");
+            UnblockUIAfterLoadingIsComplete();
+#else
+            // For other platforms, use Unity Authentication and Lobby services
             bool playerIsAuthorized = await m_AuthenticationServiceFacade.EnsurePlayerIsAuthorized();
 
             if (!playerIsAuthorized)
@@ -206,14 +304,18 @@ namespace Unity.BossRoom.Gameplay.UI
             {
                 UnblockUIAfterLoadingIsComplete();
             }
+#endif
         }
 
         void OnJoinedLobby(Unity.Services.Lobbies.Models.Lobby remoteLobby)
         {
+#if !UNITY_WEBGL || UNITY_EDITOR
+            // Only for non-WebGL platforms
             m_LobbyServiceFacade.SetRemoteLobby(remoteLobby);
 
             Debug.Log($"Joined lobby with code: {m_LocalLobby.LobbyCode}, Internal Relay Join Code{m_LocalLobby.RelayJoinCode}");
             m_ConnectionManager.StartClientLobby(m_LocalUser.DisplayName);
+#endif
         }
 
         //show/hide UI

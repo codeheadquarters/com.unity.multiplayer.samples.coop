@@ -189,6 +189,7 @@ namespace Unity.BossRoom.Gameplay.GameState
             if (NetworkManager.Singleton)
             {
                 NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnectCallback;
+                NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnectedCallback;
                 NetworkManager.Singleton.SceneManager.OnSceneEvent -= OnSceneEvent;
             }
             if (networkCharSelection)
@@ -206,6 +207,7 @@ namespace Unity.BossRoom.Gameplay.GameState
             else
             {
                 NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnectCallback;
+                NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnectedCallback;
                 networkCharSelection.OnClientChangedSeat += OnClientChangedSeat;
 
                 NetworkManager.Singleton.SceneManager.OnSceneEvent += OnSceneEvent;
@@ -250,6 +252,14 @@ namespace Unity.BossRoom.Gameplay.GameState
 
         void SeatNewPlayer(ulong clientId)
         {
+            // Check if this client is already in the lobby (for reconnections)
+            int existingIdx = FindLobbyPlayerIdx(clientId);
+            if (existingIdx != -1)
+            {
+                Debug.Log($"[ServerCharSelectState] Client {clientId} already in lobby at index {existingIdx} - skipping duplicate seating");
+                return;
+            }
+            
             // If lobby is closing and waiting to start the game, cancel to allow that new player to select a character
             if (networkCharSelection.IsLobbyClosed.Value)
             {
@@ -271,27 +281,107 @@ namespace Unity.BossRoom.Gameplay.GameState
                     throw new Exception($"we shouldn't be here, connection approval should have refused this connection already for client ID {clientId} and player num {playerData.PlayerNumber}");
                 }
 
+                Debug.Log($"[ServerCharSelectState] Seating new player - Client {clientId}, Player: {playerData.PlayerName}, PlayerNumber: {playerData.PlayerNumber}");
                 networkCharSelection.LobbyPlayers.Add(new NetworkCharSelection.LobbyPlayerState(clientId, playerData.PlayerName, playerData.PlayerNumber, NetworkCharSelection.SeatState.Inactive));
                 SessionManager<SessionPlayerData>.Instance.SetPlayerData(clientId, playerData);
+            }
+            else
+            {
+                Debug.LogError($"[ServerCharSelectState] No session data found for client {clientId} - cannot seat player");
             }
         }
 
         void OnClientDisconnectCallback(ulong clientId)
         {
+            Debug.Log($"[ServerCharSelectState] OnClientDisconnectCallback called for client {clientId}");
+            Debug.Log($"[ServerCharSelectState] Current lobby players before removal: {networkCharSelection.LobbyPlayers.Count}");
+            
+            // Log current players
+            for (int j = 0; j < networkCharSelection.LobbyPlayers.Count; ++j)
+            {
+                var player = networkCharSelection.LobbyPlayers[j];
+                Debug.Log($"[ServerCharSelectState] Player {j}: ClientId={player.ClientId}, Name={player.PlayerName}, PlayerNumber={player.PlayerNumber}");
+            }
+            
             // clear this client's PlayerNumber and any associated visuals (so other players know they're gone).
+            bool playerRemoved = false;
             for (int i = 0; i < networkCharSelection.LobbyPlayers.Count; ++i)
             {
                 if (networkCharSelection.LobbyPlayers[i].ClientId == clientId)
                 {
+                    var removedPlayer = networkCharSelection.LobbyPlayers[i];
+                    Debug.Log($"[ServerCharSelectState] Removing player from lobby: ClientId={removedPlayer.ClientId}, Name={removedPlayer.PlayerName}, PlayerNumber={removedPlayer.PlayerNumber}");
                     networkCharSelection.LobbyPlayers.RemoveAt(i);
+                    playerRemoved = true;
                     break;
+                }
+            }
+
+            if (!playerRemoved)
+            {
+                Debug.LogWarning($"[ServerCharSelectState] Client {clientId} not found in lobby players list - may have already been removed");
+            }
+            else
+            {
+                Debug.Log($"[ServerCharSelectState] Player removed successfully. Remaining lobby players: {networkCharSelection.LobbyPlayers.Count}");
+                
+                // Log remaining players
+                for (int j = 0; j < networkCharSelection.LobbyPlayers.Count; ++j)
+                {
+                    var player = networkCharSelection.LobbyPlayers[j];
+                    Debug.Log($"[ServerCharSelectState] Remaining Player {j}: ClientId={player.ClientId}, Name={player.PlayerName}, PlayerNumber={player.PlayerNumber}");
                 }
             }
 
             if (!networkCharSelection.IsLobbyClosed.Value)
             {
                 // If the lobby is not already closing, close if the remaining players are all ready
+                Debug.Log($"[ServerCharSelectState] Lobby not closed, checking if remaining players are ready");
                 CloseLobbyIfReady();
+            }
+            else
+            {
+                Debug.Log($"[ServerCharSelectState] Lobby is already closed, skipping ready check");
+            }
+        }
+
+        void OnClientConnectedCallback(ulong clientId)
+        {
+            Debug.Log($"[ServerCharSelectState] Client {clientId} connected to lobby");
+            
+            // Small delay to allow Unity NetCode to fully initialize the client connection
+            // before attempting to seat them in the lobby
+            StartCoroutine(DelayedClientSeating(clientId));
+        }
+        
+        System.Collections.IEnumerator DelayedClientSeating(ulong clientId)
+        {
+            // Wait a frame to ensure Unity NetCode has completed client initialization
+            yield return null;
+            
+            // Check if client needs to be seated (for reconnections or late joins)
+            int existingIdx = FindLobbyPlayerIdx(clientId);
+            if (existingIdx == -1)
+            {
+                Debug.Log($"[ServerCharSelectState] Seating client {clientId} after connection");
+                SeatNewPlayer(clientId);
+            }
+            else
+            {
+                Debug.Log($"[ServerCharSelectState] Client {clientId} already seated at index {existingIdx} - refreshing state");
+                
+                // For reconnecting clients, trigger a state update by temporarily modifying the player state
+                // This forces Unity NetCode to resync the lobby state to the reconnecting client
+                var currentState = networkCharSelection.LobbyPlayers[existingIdx];
+                var tempState = new NetworkCharSelection.LobbyPlayerState(
+                    currentState.ClientId,
+                    currentState.PlayerName,
+                    currentState.PlayerNumber,
+                    currentState.SeatState,
+                    currentState.SeatIdx,
+                    Time.time // Update timestamp to force a network update
+                );
+                networkCharSelection.LobbyPlayers[existingIdx] = tempState;
             }
         }
     }
